@@ -19,8 +19,49 @@
       uniform mat4 uMVMatrix;
       uniform mat4 uPMatrix;
       uniform mat3 uNMatrix;
+
+      uniform vec3 uLightPosition;
+      uniform vec3 uAmbientLightColor;
+      uniform vec3 uDiffuseLightColor;
+      uniform vec3 uSpecularLightColor;
+
+      varying vec3 vLightWeighting;
+
+      const float shininess = 32.0;
+
+      void main() {
+        vec4 vertexPositionEye4 = uMVMatrix * vec4(aVertexPosition, 1.0);
+        vec3 vertexPositionEye3 = vertexPositionEye4.xyz / vertexPositionEye4.w;
+
+        vec3 vectorToLightSource = normalize(uLightPosition - vertexPositionEye3);
+
+        vec3 normalEye = normalize(uNMatrix * aVertexNormal);
+
+        float diffuseLightWeightning = max(dot(normalEye, vectorToLightSource), 0.0);
+
+        vec3 reflectionVector = normalize(reflect(-vectorToLightSource, normalEye));
+
+        vec3 viewVectorEye = -normalize(vertexPositionEye3);
+
+        float rdotv = max(dot(reflectionVector, viewVectorEye), 0.0);
+        float specularLightWeightning = pow(rdotv, shininess);
+
+        vLightWeighting = uAmbientLightColor +
+                          uDiffuseLightColor * diffuseLightWeightning +
+                          uSpecularLightColor * specularLightWeightning;
+
+        gl_Position = uPMatrix * uMVMatrix * vec4(aVertexPosition, 1.0);
+      }
     </script>
-    <script id="shader-fs" type="x-shader/x-fragment"></script>
+    <script id="shader-fs" type="x-shader/x-fragment">
+      precision mediump float;
+      varying vec3 vLightWeighting;
+
+      void main() {
+        // 버텍스 셰이더에서 쏴준 총 밝기값의 r, g, b에 알파 채널(1.0)을 더한 색상값을 할당해 줌. -> 각 프래그먼트(픽셀)에 알아서 색상값들이 보간될거임.
+        gl_FragColor = vec4(vLightWeighting.rgb, 1.0);
+      }
+    </script>
   </head>
   <body onload="startup();">
     <canvas id="myGLCanvas" width="500" height="500"></canvas>
@@ -29,11 +70,138 @@
 </html>
 
 <!-- 
+  각 변수에 대한 설명
+
+
   aVertexNormal 
   이 애트리뷰트 변수는 말 그대로 해당 버텍스에 대해 
   수직 방향인 노멀 데이터를 전달받을거임
 
+
   uNMatrix
   이 행렬은 각 버텍스의 노멀 데이터를 
   눈 좌표계로 변환할 때 필요한 uMVMatrix의 3*3 상방행렬의 역전치행렬이라고 함.
+
+
+  uLightPosition
+  이 유니폼 변수는 해당 버텍스에서 광원으로 향하는 벡터인 
+  vertexToLightSource 를 구하기 위한 값
+
+  uAmbientLightColor, uDiffuseLightColor, uSpecularLightColor
+  각각의 유니폼 변수들은 각각
+  
+  -앰비언트 광원 성분 * 앰비언트 재질 특성
+  -디퓨즈 광원 성분 * 디퓨즈 재질 특성
+  -스펙큘러 광원 성분 * 스펙큘러 재질 특성
+  
+  위의 값들을 사전에 미리 곱해놓은 뒤, 자바스크립트 코드를 이용해서
+  버텍스 셰이더로 쏴준 값임. 
+
+
+  vLightWeighting
+  이 varying 변수는 각 버텍스에 대하여
+  3개이 반사 성분을 더해서 총 조명 밝기값을 계산하여 넣어주는 값임.
+  
+  이 값을 이제 프래그먼트 셰이더로 쏴주면 
+  프래그먼트 셰이더는 이 밝기값에 알파 채널을 더한 동차 좌표계로 확장하여 
+  gl_FragColor 내장 변수에 할당해주는 것. -> 알아서 선형보간되어 프래그먼트(픽셀)에 색상값이 지정될거임.
+
+
+  shininess
+  얘는 광택값!
+
+  스펙큘러 반사의 밝기값을 구할 때
+  제곱해주는 값이라고 보면 됨.
+-->
+
+<!-- 
+  조명계산에 필요한 벡터들을 단위벡터화 시키는 이유
+
+  참고로 조명계산에 필요한 모든 벡터는 
+  셰이더의 내장함수은 normal() 을 이용해서
+  길이가 1인 단위 벡터로 만들어놓은 다음에 계산을 시작해야 함.
+
+  왜 그렇냐면, 
+  책에서 각각의 반사 성분을 구하는 공식을 보면 알겠지만,
+  각 반사 성분의 밝기값을 두 벡터가 이루는 사잇각의 cos 값에 비례하도록 계산하려는 것임.
+
+  이 때, 각 공식에서 벡터끼리 내적을 하게 되는데,
+  내적에 사용되느 두 벡터의 길이(norm)가 1이라면
+  두 벡터의 내적 = 1 * 1 * cos(두 벡터 사잇각) = cos(두 벡터 사잇각)
+  이렇게 되기 때문에, 내적에 사용되는 두 벡터의 길이를 1로 맞추기 위해
+  정규화, 즉 단위벡터화 시킨다고 보면 됨.
+-->
+
+<!-- 
+버텍스 셰이더에서 조명 계산하는 과정 설명
+
+원래는 스크립트 태그에 주석처리로 정리해놨는데, 
+셰이더 코드 사이사이에 주석이 있다보니까 끝부분에 ';' 이거 하나를 못써줘서
+계속 셰이더 컴파일 에러가 발생했음. 
+아무래도 셰이더 코드는 주석처리하면 오타가 자꾸 날 것 같으니
+그냥 여기에 정리했던 내용들을 복붙해놨음.
+
+
+// 퐁 반사 모델로 각 버텍스의 조명값을 계산하는 버텍스 셰이더 코드 (각 변수에 대한 설명은 하단 코멘트 참고)
+attribute vec3 aVertexPosition;
+attribute vec3 aVertexNormal;
+
+uniform mat4 uMVMatrix;
+uniform mat4 uPMatrix;
+uniform mat3 uNMatrix;
+
+uniform vec3 uLightPosition;
+uniform vec3 uAmbientLightColor;
+uniform vec3 uDiffuseLightColor;
+uniform vec3 uSpecularLightColor;
+
+varying vec3 vLightWeighting;
+
+const float shininess = 32.0;
+
+void main() {
+  // 참고로, 조명 계산 시에는 모든 버텍스 위치 좌표값과 노멀 벡터를 눈좌표계로 맞춰준 뒤에 계산해야 함.
+  // 여기서도 자바스크립트에서 쏴준 버텍스 좌표값들에 모델뷰 행렬을 곱해줘서 눈좌표계로 변환하고 시작해야겠지.
+  vec4 vertexPositionEye4 = uMVMatrix * vec4(aVertexPosition, 1.0);
+
+  // 얘는 인제 동차좌표의 마지막 값인 w로 x, y, z를 나눠서 vec3로 변환하려는 것 같음.
+  // 위에서는 4*4 모델뷰행렬과 곱하기 위해 동차좌표로 만들었지만, 이후에 조명계산에 필요한 벡터들을 계산하려면 vec3로 맞춰줘야 하기 때문... (ex. 광원을 향하는 벡터)
+  vec3 vertexPositionEye3 = vertexPositionEye4.xyz / vertexPositionEye4.w;
+
+  // 각 버텍스에서 광원으로 향하는 광원 벡터(l) 계산 (단위벡터화)
+  vec3 vectorToLightSource = normalize(uLightPosition - vertexPositionEye3);
+
+  // 노말 벡터를 눈좌표계로 변환하는 과정 (노멀을 눈좌표계로 변환하려면 특별한 3*3 행렬로 곱해줘야 함. p.336 참고)
+  // 또한 눈좌표계로 변환된 노말 벡터를 normalize로 단위벡터화까지 해줘야 함.
+  vec3 normalEye = normalize(uNMatrix * aVertexNormal);
+
+  // 디퓨즈 반사를 계산하기 위해, 광원 벡터(l)와 노말 벡터(n)을 내적 계산함. (p.325 ~ 328 참고)
+  // 이 때, dot() 은 내적 계산을 위한 내장함수이고, max() 는 내적 계산의 결과값이 0.0 보다 작으면 0.0을 리턴하는 내장함수.
+  float diffuseLightWeightning = max(dot(normalEye, vectorToLightSource), 0.0);
+
+  // 스펙큘러 반사 계산에 필요한 반사 벡터(r) 계산함. (p.330 참고)
+  // 참고로 셰이더에서는 내장함수 reflect()를 이용해서, 광원 벡터(l), 노말 벡터(n)만 알고 있으면 알아서 반사 벡터를 계산해 줌.
+  // 이때, reflect() 함수는 광원벡터(l)의 방향을 반대로 해서 전달해줘야 함. (즉, 광원 -> 버텍스 방향 벡터로 전달해줘야 한다는 뜻.)
+  vec3 reflectionVector = normalize(reflect(-vectorToLightSource, normalEye));
+
+  // 스펙큘러 반사 계산에 필요한 관찰자(카메라) 벡터(v) 계산
+  // 웹지엘에서 관찰자 = 카메라이고, 카메라는 항상 원점에 고정되어 있으면서 음의 z축을 바라봄.
+  // 따라서, (0.0, 0.0, 0.0) - vertexPositionEye3 로 구할 수 있고, 이는 -vertexPositionEye3 와 동일함.
+  vec3 viewVectorEye = -normalize(vertexPositionEye3);
+
+  // 스펙큘러 반사 계산을 위해, 반사 벡터(r)과 관찰자 벡터(v)를 내적 계산함. (p.329 참고)
+  float rdotv = max(dot(reflectionVector, viewVectorEye), 0.0);
+
+  // 스펙큘러 반사 계산을 위해, 내적 결과값을 광택(shininess)값 만큼 거듭제곱 해줘야 함. (p.331 참고) 내장함수인 pow()로 해줌.
+  float specularLightWeightning = pow(rdotv, shininess);
+
+  // 세 개의 반사성분을 모두 더하여 버텍스의 총 밝기값을 구함 (p.332 ~ 333 참고)
+  vLightWeighting = uAmbientLightColor +
+                    uDiffuseLightColor * diffuseLightWeightning +
+                    uSpecularLightColor * specularLightWeightning;
+
+  // 이거는 늘 하던대로 버텍스 위치 좌표를 행렬 변환을 해준 다음 gl_Position에 할당하는거
+  gl_Position = uPMatrix * uMVMatrix * vec4(aVertexPosition, 1.0);
+}
+
 -->
